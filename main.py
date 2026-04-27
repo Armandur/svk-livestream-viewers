@@ -77,16 +77,11 @@ async def _run_stream(uuid: str, name: str) -> None:
 
                 @sio.event
                 async def stream_status(data):
-                    # Dra bort 1 för vår egen Socket.IO-anslutning som räknas som tittare
-                    count = max(0, int(data.get("users_total", 0)) - 1)
-                    store.record(name, count)
-                    # alive=1 från Rackfish, eller sekundär signal: fler tittare än bara vår server
-                    alive = bool(data.get("alive", 0)) or int(data.get("users_total", 0)) > 1
-                    prev = store.is_alive(name)
-                    store.set_alive(name, alive)
-                    if alive != prev:
-                        log.info("%s: alive %s → %s", name, prev, alive)
-                    log.debug("%s: råvärde=%d justerat=%d alive=%s", name, data.get("users_total"), count, data.get("alive"))
+                    count, alive_changed = store.merge_event(name, data)
+                    if alive_changed is not None:
+                        log.info("%s: alive → %s", name, alive_changed)
+                    if count is not None:
+                        log.debug("%s: %d tittare (visat: %d)", name, count, store.smoothed(name))
 
                 @sio.event
                 async def connect():

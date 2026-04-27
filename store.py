@@ -15,6 +15,7 @@ _streams: List[Dict[str, str]] = []  # List of {uuid, name}
 _last_nonzero: Dict[str, int] = {}
 _last_nonzero_ts: Dict[str, float] = {}
 _alive: Dict[str, bool] = {}
+_rackfish_state: Dict[str, dict] = {}  # ackumulerat Rackfish-state per ström
 _tasks: Dict[str, asyncio.Task] = {}
 
 # We need a reference to the run_stream function which will be in main.py
@@ -40,8 +41,23 @@ def smoothed(name: str) -> int:
 def is_alive(name: str) -> bool:
     return _alive.get(name, False)
 
-def set_alive(name: str, alive: bool) -> None:
+def merge_event(name: str, data: dict) -> tuple[int | None, bool | None]:
+    """Mergear ett delta-event i det ackumulerade state. Returnerar (count, alive) om något förändrats."""
+    state = _rackfish_state.setdefault(name, {})
+    state.update(data)
+
+    count = None
+    if "users_total" in data:
+        count = max(0, int(data["users_total"]) - 1)
+        if count > 0:
+            _last_nonzero[name] = count
+            _last_nonzero_ts[name] = time.monotonic()
+
+    alive = bool(state.get("alive", 0)) or int(state.get("users_total", 0)) > 1
+    prev = _alive.get(name)
     _alive[name] = alive
+    changed_alive = alive if alive != prev else None
+    return count, changed_alive
 
 def record(name: str, count: int) -> None:
     if count > 0:
@@ -88,6 +104,7 @@ async def remove_stream(name: str):
     _last_nonzero.pop(name, None)
     _last_nonzero_ts.pop(name, None)
     _alive.pop(name, None)
+    _rackfish_state.pop(name, None)
 
 def start_stream_task(uuid: str, name: str):
     if name in _tasks:
