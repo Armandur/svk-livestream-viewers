@@ -51,7 +51,7 @@ javascript:(async function(){
     cb.type = 'checkbox';
     cb.dataset.uuid = s.uuid;
     cb.dataset.name = s.name;
-    cb.checked = s.alive;
+    cb.checked = false;
     const dot = document.createElement('span');
     dot.style.cssText = 'width:8px;height:8px;border-radius:50%;flex-shrink:0;background:' + (s.alive ? '#28a745' : '#ccc');
     const label = document.createElement('span');
