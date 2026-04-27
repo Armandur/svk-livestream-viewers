@@ -17,9 +17,8 @@ import store
 
 log = logging.getLogger(__name__)
 
-EMBED_BASE = "https://livestream.rackfish.com/embed"
+PLAYER_BASE = "https://livestream.rackfish.com/player"
 SOCKET_URL = "https://rackfishlive-player.global.ssl.fastly.net"
-REFERER = "https://livestream.rackfish.com/"
 JWT_REFRESH_SECS = 6 * 3600
 
 class Settings(BaseSettings):
@@ -50,13 +49,7 @@ class StreamImport(BaseModel):
     streams: List[StreamCreate]
 
 async def _get_jwt(client: httpx.AsyncClient, uuid: str) -> str:
-    r = await client.get(
-        f"{EMBED_BASE}?uuid={uuid}",
-        headers={
-            "Referer": REFERER,
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
-        },
-    )
+    r = await client.get(f"{PLAYER_BASE}/{uuid}")
     r.raise_for_status()
     m = re.search(r"Main\.Init\s*\(\s*\w+\s*,\s*'([^']+)'", r.text)
     if not m:
@@ -167,19 +160,12 @@ async def status_endpoint() -> dict:
     return {s["name"]: {"viewers": store.smoothed(s["name"])} for s in store.get_streams()}
 
 @app.get("/player/{stream_name}")
-async def player_proxy(stream_name: str):
+async def player_redirect(stream_name: str):
     stream = next((s for s in store.get_streams() if s["name"] == stream_name), None)
     if not stream:
         raise HTTPException(status_code=404, detail=f"Ström '{stream_name}' är inte konfigurerad")
-    async with httpx.AsyncClient(timeout=15) as client:
-        r = await client.get(
-            f"{EMBED_BASE}?uuid={stream['uuid']}",
-            headers={"Referer": REFERER, "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"},
-        )
-        if not r.is_success:
-            raise HTTPException(status_code=r.status_code, detail="Kunde inte hämta player-sidan")
-        from fastapi.responses import HTMLResponse
-        return HTMLResponse(content=r.text)
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url=f"{PLAYER_BASE}/{stream['uuid']}", status_code=302)
 
 # Static Files
 app.mount("/static", StaticFiles(directory="static"), name="static")
