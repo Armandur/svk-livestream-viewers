@@ -8,7 +8,7 @@ from typing import Dict, List, Optional
 log = logging.getLogger(__name__)
 
 STREAMS_FILE = "streams.json"
-NONZERO_TTL = 10.0
+NONZERO_TTL = 20.0
 
 # state
 _streams: List[Dict[str, str]] = []  # List of {uuid, name}
