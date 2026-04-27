@@ -1,0 +1,12 @@
+[project]
+name = "svk-livestream-viewers"
+version = "0.2.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "httpx",
+    "pydantic-settings",
+    "python-socketio[asyncio_client]",
+    "aiofiles",
+]
