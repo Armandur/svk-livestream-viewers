@@ -18,19 +18,15 @@ realtid via `stream_status`-event. Ingen SVK-sessionscookie krävs.
 
 ## Autentisering mot Rackfish
 
-Rackfish kräver ett JWT i `join_stream`-eventet. JWT:t hämtas från embed-sidan:
+Rackfish kräver ett JWT i `join_stream`-eventet. JWT:t hämtas från player-sidan:
 
 ```
-GET https://livestream.rackfish.com/embed?uuid={uuid}
-Headers: Referer: https://livestream.rackfish.com/
+GET https://livestream.rackfish.com/player/{uuid}
 ```
 
-Embed-sidan returnerar HTML med `Main.Init(OnConnected, 'JWT_TOKEN')`.
+Player-sidan är helt publik - ingen Referer eller autentisering krävs.
+Den returnerar HTML med `Main.Init(OnConnected, 'JWT_TOKEN')`.
 JWT:t extraheras med regex och är giltigt i 24h. Servern hämtar nytt var 6:e timme.
-
-**Obs:** Rackfish kontrollerar Referer-headern men kräver ingen inloggad session.
-Embed-URL:en är designad för extern inbäddning och kräver bara att Referer är på
-`livestream.rackfish.com`.
 
 ---
 
