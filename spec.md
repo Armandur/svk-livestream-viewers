@@ -1,6 +1,6 @@
 # svk-livestream-viewers – spec
 
-HTTP-server som returnerar aktuellt tittarantal för SVK-livesändningar.
+HTTP-server som visar realtids-tittarantal för SVK-livesändningar.
 Primärt syfte: integreras i **Bitfocus Companion** och visas på StreamDeck-knapp.
 
 ---
@@ -9,24 +9,31 @@ Primärt syfte: integreras i **Bitfocus Companion** och visas på StreamDeck-kna
 
 ```
 StreamDeck → Companion (HTTP-polling) → FastAPI-server → Rackfish Socket.IO
+                                              ↑
+                                        Webb-UI (browser)
 ```
 
 Servern håller en persistent Socket.IO-anslutning per ström och uppdateras i
 realtid via `stream_status`-event. Ingen SVK-sessionscookie krävs.
 
+Strömkonfiguration sparas i `streams.json` och hanteras via webb-UI eller API.
+
 ---
 
 ## Autentisering mot Rackfish
 
-Rackfish kräver ett JWT i `join_stream`-eventet. JWT:t hämtas från player-sidan:
+JWT hämtas från Rackfish embed-sidan:
 
 ```
-GET https://livestream.rackfish.com/player/{uuid}
+GET https://livestream.rackfish.com/embed?uuid={uuid}
+Headers: Referer: https://livestream.rackfish.com/
 ```
 
-Player-sidan är helt publik - ingen Referer eller autentisering krävs.
-Den returnerar HTML med `Main.Init(OnConnected, 'JWT_TOKEN')`.
+Embed-sidan returnerar HTML med `Main.Init(OnConnected, 'JWT_TOKEN')`.
 JWT:t extraheras med regex och är giltigt i 24h. Servern hämtar nytt var 6:e timme.
+
+Vissa strömmar har Referer-restriktioner konfigurerade – embed-URL:en med
+`Referer: https://livestream.rackfish.com/` fungerar universellt.
 
 ---
 
@@ -36,64 +43,94 @@ JWT:t extraheras med regex och är giltigt i 24h. Servern hämtar nytt var 6:e t
 
 ### Anslutningsflöde
 
-1. `connect` - ansluten
-2. Emittera `join_stream` med `{"uuid": "...", "token": "JWT"}`
-3. Ta emot `stream_status`-event
+1. Anslut till Socket.IO-servern
+2. Emittera `join_stream` med **två separata argument**: `(uuid, jwt)`
+   (inte ett objekt – detta är avgörande)
+3. Ta emot `stream_status`-events
 
-### `stream_status`-event (inkommande)
+### `stream_status`-event
+
+Rackfish skickar **delta-events** – bara förändrade fält. Det första eventet
+efter `join_stream` är ett fullständigt snapshot; därefter skickas bara det som
+ändrats. Fält som saknas i ett event ska tolkas som oförändrade.
 
 ```json
-{
-  "users_total": 42,
-  ...
-}
+// Fullständigt snapshot (första eventet)
+{"alive": 1, "post_event": 0, "users_total": 3, "manifest_valid": true,
+ "manifest_status": 200, "manifest_count": 158}
+
+// Deltaevents (efterföljande)
+{"users_total": 2}
+{"manifest_count": 159}
 ```
 
-`users_total` = aktuellt antal tittare. Skickas vid förändring.
+| Fält | Beskrivning |
+|------|-------------|
+| `alive` | `1` = encoder aktivt ansluten och sänder |
+| `users_total` | Antal Socket.IO-anslutningar (inkl. vår server = +1) |
+| `manifest_valid` | HLS-manifestet är tillgängligt |
+| `manifest_count` | Räknare för manifest-hämtningar (uppdateras ~var 3s av Rackfish) |
+
+**`alive`-logik:** `alive=True` om Rackfish-fältet är `1` ELLER om
+`users_total > 1` (fler än bara vår server tittar).
+
+**Tittarkorrigering:** `users_total - 1` (kompenserar för vår egen anslutning).
+Räknaren smoothas med 20s TTL för att filtrera bort Rackfishs oscillationer.
 
 ---
 
 ## Endpoints
 
 ### `GET /viewers/{stream_name}`
+Plain text, för Companion. Returnerar smoothat tittarantal.
 
-Returnerar aktuellt tittarantal som **plain text** (för Companion).
-
-**Response:** `42` (plain text, HTTP 200)
-
-Returnerar `0` om strömmen inte är live eller ingen `stream_status` har tagits emot ännu.
-Returnerar HTTP 404 om `stream_name` inte är konfigurerat.
+### `GET /player/{stream_name}`
+Proxar Rackfish embed-sidan via servern med korrekt Referer-header.
 
 ### `GET /status`
+```json
+{"svk005": {"viewers": 3}}
+```
 
-JSON-svar med alla konfigurerade strömmar och deras senaste värden.
+### `GET /api/streams`
+```json
+[{"uuid": "...", "name": "svk005", "viewers": 3, "alive": true}]
+```
+
+### `POST /api/streams`
+Body: `{"uuid": "...", "name": "svk005"}`. Startar Socket.IO-task direkt.
+
+### `POST /api/streams/import`
+Body: `{"streams": [{"uuid": "...", "name": "svk005"}]}`.
+Hoppar över strömmar som redan finns.
+
+### `DELETE /api/streams/{name}`
+Stoppar Socket.IO-task och tar bort från `streams.json`.
 
 ---
 
 ## Konfiguration (.env)
 
 ```
-STREAM_UUIDS=c9edf4b1-d693-11e7-a385-005056be0018:svk005,uuid2:svk007
+STREAM_UUIDS=uuid1:svk005,uuid2:svk007   # seed vid första start om streams.json saknas
 PORT=8765
+LOG_LEVEL=INFO                            # DEBUG loggar per-event-detaljer
 ```
-
-Format: kommaseparerade `uuid:namn`-par.
-UUID hittas i Rackfish player-URL:en eller via SVK admin-API:et.
 
 ---
 
 ## Companion-setup
 
-1. Lägg till en **Generic HTTP** action eller variabel i Companion
+1. Lägg till en **Generic HTTP**-variabel i Companion
 2. URL: `http://<server-ip>:8765/viewers/svk005`
-3. Polling: var 30s
-4. Visa svaret på StreamDeck-knappen som text
+3. Polling: var 5–10s
+4. Visa svaret på StreamDeck-knappen
 
 ---
 
 ## Felhantering
 
-- Player-sidan returnerar 403: retry om 60s
-- JWT saknas i HTML: retry om 60s
-- Socket.IO kopplar ner: `users_total` sätts till 0, reconnect försöks upp till 10 ggr
+- Embed-sidan returnerar 403 eller JWT saknas: retry om 60s
+- Socket.IO kopplar ner: tittarantal och alive behåller senaste kända värde,
+  reconnect försöks upp till 10 ggr med 30s fördröjning
 - JWT förfaller (24h): servern hämtar nytt var 6:e timme
